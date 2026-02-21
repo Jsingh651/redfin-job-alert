@@ -122,7 +122,7 @@ def main():
     current_count = len(jobs)
     print(f"📋 Current job count: {current_count}")
 
-    if current_count > 0 and current_count > state["last_count"]:
+    if True:
         new_count = current_count - state["last_count"]
         titles    = "\n• ".join(j["title"] for j in jobs)
         link      = jobs[0]["url"] if jobs[0]["url"] else \
