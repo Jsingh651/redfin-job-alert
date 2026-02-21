@@ -15,13 +15,13 @@ from playwright.sync_api import sync_playwright
 
 # ── Email alert ───────────────────────────────────────────────────────────────
 def send_email(subject: str, body: str):
-    gmail_user     = os.environ["GMAIL_ADDRESS"]       # jangsing02@gmail.com
-    gmail_password = os.environ["GMAIL_APP_PASSWORD"]  # 16-char app password
+    gmail_user     = os.environ["GMAIL_ADDRESS"]
+    gmail_password = os.environ["GMAIL_APP_PASSWORD"]
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"]    = gmail_user
-    msg["To"]      = gmail_user  # sending to yourself
+    msg["To"]      = gmail_user
     msg.attach(MIMEText(body, "plain"))
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
@@ -45,7 +45,11 @@ def save_state(state: dict):
 
 # ── Core scraper ──────────────────────────────────────────────────────────────
 def get_sacramento_jobs() -> list[dict]:
-    jobs = []
+    """
+    Loads ALL associate agent jobs then filters down to Sacramento, CA only.
+    This is more reliable than trying to click the UI filters.
+    """
+    all_jobs = []
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -58,71 +62,75 @@ def get_sacramento_jobs() -> list[dict]:
             timeout=60_000,
         )
 
-        # ── Apply State = California filter ──────────────────────────────────
-        print("🔍 Applying State filter: California...")
-        try:
-            page.click("text=State", timeout=10_000)
-            time.sleep(1)
-            page.click("text=California", timeout=10_000)
-            time.sleep(2)
-        except Exception as e:
-            print(f"⚠️  Could not click State/California filter: {e}")
+        time.sleep(4)  # let JS fully render
 
-        # ── Apply City = Sacramento filter ────────────────────────────────────
-        print("🔍 Applying City filter: Sacramento...")
-        try:
-            page.click("text=City", timeout=10_000)
-            time.sleep(1)
-            page.click("text=Sacramento", timeout=10_000)
-            time.sleep(2)
-        except Exception as e:
-            print(f"⚠️  Could not click City/Sacramento filter: {e}")
-
-        time.sleep(3)
-
-        # ── Collect job cards ─────────────────────────────────────────────────
+        # ── Grab every job link on the page ───────────────────────────────────
         selectors = [
             "[data-ph-at-id='job-link']",
             "a[href*='/us/en/job/']",
-            ".job-title",
-            "[class*='jobTitle']",
-            "[class*='job-title']",
+            "[class*='jobTitle'] a",
+            "[class*='job-title'] a",
+            ".job-title a",
         ]
 
         for sel in selectors:
             elements = page.query_selector_all(sel)
             if elements:
-                print(f"✅ Found {len(elements)} element(s) with selector '{sel}'")
+                print(f"Found {len(elements)} total job(s) with selector '{sel}'")
                 for el in elements:
                     title = el.inner_text().strip()
                     href  = el.get_attribute("href") or ""
                     if href and not href.startswith("http"):
                         href = "https://careers.redfin.com" + href
                     if title:
-                        jobs.append({"title": title, "url": href})
+                        all_jobs.append({"title": title, "url": href})
                 break
-        else:
+
+        # Also try grabbing location text near each job
+        # by reading the full page text and parsing it
+        if not all_jobs:
             content = page.content()
             if "There are no jobs" in content or "no jobs for your search" in content.lower():
-                print("ℹ️  Page says: no jobs found for this filter.")
+                print("ℹ️  No jobs found on the page at all.")
             else:
                 print("⚠️  Could not parse job listings — page text:")
-                print(page.inner_text("body")[:2000])
+                print(page.inner_text("body")[:3000])
 
         browser.close()
 
-    return jobs
+    print(f"Total jobs found before location filter: {len(all_jobs)}")
+
+    # ── Filter to Sacramento, CA only ─────────────────────────────────────────
+    sacramento_keywords = ["sacramento", "elk grove", "roseville", "folsom", "rancho cordova"]
+    california_keywords = ["california", ", ca", "(ca)"]
+
+    sacramento_jobs = []
+    for job in all_jobs:
+        title_lower = job["title"].lower()
+        url_lower   = job["url"].lower()
+        combined    = title_lower + " " + url_lower
+
+        is_sacramento = any(kw in combined for kw in sacramento_keywords)
+        is_california = any(kw in combined for kw in california_keywords)
+
+        if is_sacramento or is_california:
+            sacramento_jobs.append(job)
+            print(f"✅ Sacramento match: {job['title']}")
+        else:
+            print(f"⛔ Skipping (not Sacramento): {job['title']}")
+
+    return sacramento_jobs
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     state = load_state()
-    print(f"📋 Last known job count: {state['last_count']}")
+    print(f"📋 Last known Sacramento job count: {state['last_count']}")
 
     jobs = get_sacramento_jobs()
     current_count = len(jobs)
-    print(f"📋 Current job count: {current_count}")
+    print(f"📋 Current Sacramento job count: {current_count}")
 
-    if True:
+    if current_count > 0 and current_count > state["last_count"]:
         new_count = current_count - state["last_count"]
         titles    = "\n• ".join(j["title"] for j in jobs)
         link      = jobs[0]["url"] if jobs[0]["url"] else \
@@ -139,11 +147,11 @@ def main():
         state["last_count"] = current_count
 
     elif current_count == 0 and state["last_count"] > 0:
-        print("ℹ️  Jobs gone. Resetting counter.")
+        print("ℹ️  Sacramento jobs gone. Resetting counter.")
         state["last_count"] = 0
 
     else:
-        print("✅ No change in job count. No alert needed.")
+        print("✅ No change in Sacramento job count. No alert needed.")
 
     save_state(state)
 
