@@ -45,10 +45,6 @@ def save_state(state: dict):
 
 # ── Core scraper ──────────────────────────────────────────────────────────────
 def get_sacramento_jobs() -> list[dict]:
-    """
-    Loads ALL associate agent jobs then filters down to Sacramento, CA only.
-    This is more reliable than trying to click the UI filters.
-    """
     all_jobs = []
 
     with sync_playwright() as p:
@@ -62,9 +58,8 @@ def get_sacramento_jobs() -> list[dict]:
             timeout=60_000,
         )
 
-        time.sleep(4)  # let JS fully render
+        time.sleep(4)
 
-        # ── Grab every job link on the page ───────────────────────────────────
         selectors = [
             "[data-ph-at-id='job-link']",
             "a[href*='/us/en/job/']",
@@ -86,8 +81,6 @@ def get_sacramento_jobs() -> list[dict]:
                         all_jobs.append({"title": title, "url": href})
                 break
 
-        # Also try grabbing location text near each job
-        # by reading the full page text and parsing it
         if not all_jobs:
             content = page.content()
             if "There are no jobs" in content or "no jobs for your search" in content.lower():
@@ -100,20 +93,12 @@ def get_sacramento_jobs() -> list[dict]:
 
     print(f"Total jobs found before location filter: {len(all_jobs)}")
 
-    # ── Filter to Sacramento, CA only ─────────────────────────────────────────
     sacramento_keywords = ["sacramento", "elk grove", "roseville", "folsom", "rancho cordova"]
-    california_keywords = ["california", ", ca", "(ca)"]
 
     sacramento_jobs = []
     for job in all_jobs:
-        title_lower = job["title"].lower()
-        url_lower   = job["url"].lower()
-        combined    = title_lower + " " + url_lower
-
-        is_sacramento = any(kw in combined for kw in sacramento_keywords)
-        is_california = any(kw in combined for kw in california_keywords)
-
-        if is_sacramento or is_california:
+        combined = (job["title"] + " " + job["url"]).lower()
+        if any(kw in combined for kw in sacramento_keywords):
             sacramento_jobs.append(job)
             print(f"✅ Sacramento match: {job['title']}")
         else:
